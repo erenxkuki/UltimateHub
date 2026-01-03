@@ -1,6 +1,6 @@
 
 -- Deobf By Hiru Hub Team , Xester Hub
-local WindUI = (loadstring(game:HttpGet("https://relzhub.farrelghibran.com/lib/source.lua")))();
+local WindUI = (loadstring(game:HttpGet("https://raw.githubusercontent.com/erenxkuki/UltimateHub/refs/heads/main/lib.lua%20(1)%20(2).lua")))();
 local Window = WindUI:CreateWindow({
 	Title = "UUltimatLY Hub",
 	Author = "Blox Fruits",
@@ -10168,4 +10168,5 @@ spawn(function()
 		end);
 	end;
 end);
+
  
