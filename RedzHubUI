@@ -1,0 +1,1514 @@
+-- skidder hideout
+-- tuong idol trieu ngu nhu nao cung chat lgbt ma thoi
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+
+local redzlib = {}
+redzlib.Flags = {}
+redzlib.Info = {Version="RyzuHub-Purple"}
+
+-- ===== RYZU HUB THEME: PURPLE | WHITE | BLACK =====
+local THEME = {
+    Bg      = Color3.fromRGB(10, 8, 15),     -- deep black/purple
+    Panel   = Color3.fromRGB(22, 20, 30),    -- dark purple-gray
+    Panel2  = Color3.fromRGB(30, 28, 38),    -- slightly lighter
+    Stroke  = Color3.fromRGB(85, 70, 120),   -- purple-gray stroke
+    Text    = Color3.fromRGB(245, 245, 255), -- white with slight purple
+    Sub     = Color3.fromRGB(200, 195, 220),
+    Muted   = Color3.fromRGB(150, 140, 170),
+    Accent  = Color3.fromRGB(156, 78, 222),  -- vibrant purple
+    Accent2 = Color3.fromRGB(130, 55, 200),  -- darker purple
+    Danger  = Color3.fromRGB(255, 80, 90),
+}
+-- ===============================================
+
+--// small helpers
+local function safe(f, ...)
+    local ok, res = pcall(f, ...)
+    if ok then return res end
+    warn("[Ryzu_UI_ERR]", res)
+    return nil
+end
+
+local function new(inst, props)
+    local o = Instance.new(inst)
+    for k,v in pairs(props or {}) do o[k]=v end
+    return o
+end
+
+local function corner(p, r) new("UICorner",{Parent=p, CornerRadius=r or UDim.new(0,10)}) end
+local function stroke(p, t, c, tr)
+    local s = Instance.new("UIStroke")
+    s.Parent = p
+    s.Thickness = t or 1
+    s.Color = c or THEME.Stroke
+    s.Transparency = (tr ~= nil) and tr or 0.20
+    pcall(function() s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border end)
+    pcall(function() s.LineJoinMode = Enum.LineJoinMode.Round end)
+    return s
+end
+local function pad(p, a,b,c,d)
+    new("UIPadding",{
+        Parent=p,
+        PaddingLeft=UDim.new(0,a or 8),
+        PaddingRight=UDim.new(0,b or 8),
+        PaddingTop=UDim.new(0,c or 8),
+        PaddingBottom=UDim.new(0,d or 8),
+    })
+end
+local function grad(p)
+    local g = new("UIGradient",{Parent=p})
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, THEME.Accent),
+        ColorSequenceKeypoint.new(1, THEME.Accent2),
+    })
+    g.Rotation = 35
+    return g
+end
+
+local function hasFS()
+    return type(writefile)=="function" and type(readfile)=="function" and type(isfile)=="function"
+end
+
+local function clamp(x,a,b) if x<a then return a elseif x>b then return b else return x end end
+
+local function dragify(frame, handle, smooth)
+    handle = handle or frame
+    smooth = (smooth ~= false)
+    local dragging=false
+    local startPos, startInput
+    local lastTween=nil
+
+    local function setPos(pos)
+        if not smooth then
+            frame.Position = pos
+            return
+        end
+        if lastTween then pcall(function() lastTween:Cancel() end) end
+        lastTween = TweenService:Create(frame, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position=pos})
+        lastTween:Play()
+    end
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            startPos = frame.Position
+            startInput = input.Position
+            input.Changed:Connect(function()
+                if input.UserInputState==Enum.UserInputState.End then dragging=false end
+            end)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
+            local delta = input.Position - startInput
+            setPos(UDim2.new(startPos.X.Scale, startPos.X.Offset+delta.X, startPos.Y.Scale, startPos.Y.Offset+delta.Y))
+        end
+    end)
+end
+
+--// tween
+local function tw(obj, ti, props)
+    safe(function()
+        TweenService:Create(obj, ti or TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
+    end)
+end
+
+--// config
+local function encode(t) return HttpService:JSONEncode(t) end
+local function decode(s) return HttpService:JSONDecode(s) end
+
+function redzlib:MakeWindow(cfg)
+    cfg = cfg or {}
+    local Title = tostring(cfg.Title or "Ryzu Hub")
+    local SubTitle = tostring(cfg.SubTitle or "Purple | White | Black")
+    local SaveFolder = tostring(cfg.SaveFolder or "RyzuHub_Config.json")
+    local BackgroundImage = nil
+    local TabLogoImage = cfg.TabLogoImage
+    local ToggleButtonImage = cfg.ToggleButtonImage
+
+    -- nuke old
+    safe(function()
+        local old = CoreGui:FindFirstChild("Ryzu_Hub_UI")
+        if old then old:Destroy() end
+        local old2 = CoreGui:FindFirstChild("Ryzu_UI_ToggleBtn")
+        if old2 then old2:Destroy() end
+    end)
+
+    local gui = new("ScreenGui",{
+        Name="Ryzu_Hub_UI",
+        Parent=CoreGui,
+        ResetOnSpawn=false,
+        IgnoreGuiInset=true,
+        ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    })
+
+    -- portal overlay (dropdown, popups)
+    local portal = new("Frame",{
+        Parent=gui,
+        Name="Portal",
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        ZIndex=9999,
+    })
+
+    -- window size
+    local winW, winH = 480, 460
+    if type(cfg.Size) == "table" then
+        winW = tonumber(cfg.Size[1]) or winW
+        winH = tonumber(cfg.Size[2]) or winH
+    end
+    winW = clamp(winW, 360, 720)
+    winH = clamp(winH, 300, 680)
+
+    local main = new("Frame",{
+        Parent=gui,
+        Size=UDim2.fromOffset(winW, winH),
+        Position=UDim2.new(0.5, -math.floor(winW/2), 0.5, -math.floor(winH/2)),
+        BackgroundColor3=THEME.Bg,
+        BackgroundTransparency=0.04,
+        ClipsDescendants=true,
+    })
+    corner(main, UDim.new(0,14))
+
+    local rootBorder = new("Frame",{
+        Parent=main,
+        Name="RootBorder",
+        Size=UDim2.new(1,-2,1,-2),
+        Position=UDim2.new(0,1,0,1),
+        BackgroundTransparency=1,
+        ZIndex=2,
+    })
+    corner(rootBorder, UDim.new(0,14))
+    stroke(rootBorder, 1, THEME.Stroke, 0.18)
+
+    local bg = new("ImageLabel",{
+        Parent=main,
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        Image="",
+        ImageTransparency=1,
+        ScaleType=Enum.ScaleType.Crop,
+    })
+    corner(bg, UDim.new(0,14))
+
+    local glass = new("Frame",{
+        Parent=main,
+        Size=UDim2.fromScale(1,1),
+        BackgroundColor3=THEME.Bg,
+        BackgroundTransparency=0.55,
+    })
+    corner(glass, UDim.new(0,14))
+
+    local top = new("Frame",{
+        Parent=main,
+        Size=UDim2.new(1,-14,0,58),
+        Position=UDim2.new(0,7,0,7),
+        BackgroundColor3=THEME.Panel,
+        BackgroundTransparency=0.12,
+        ClipsDescendants=true,
+    })
+    corner(top, UDim.new(0,12))
+    stroke(top, 1, THEME.Stroke, 0.20)
+
+    local title = new("TextLabel",{
+        Parent=top,
+        Size=UDim2.new(1,-16,0,24),
+        Position=UDim2.new(0,12,0,8),
+        BackgroundTransparency=1,
+        Text=Title,
+        TextColor3=THEME.Text,
+        Font=Enum.Font.GothamBold,
+        TextSize=28,
+        TextXAlignment=Enum.TextXAlignment.Left,
+    })
+    local sub = new("TextLabel",{
+        Parent=top,
+        Size=UDim2.new(1,-16,0,18),
+        Position=UDim2.new(0,12,0,32),
+        BackgroundTransparency=1,
+        Text=SubTitle,
+        TextColor3=THEME.Sub,
+        Font=Enum.Font.GothamMedium,
+        TextSize=14,
+        TextXAlignment=Enum.TextXAlignment.Left,
+    })
+
+    local accentLine = new("Frame",{
+        Parent=top,
+        Size=UDim2.new(1,-24,0,2),
+        Position=UDim2.new(0,12,1,-10),
+        BackgroundColor3=Color3.new(1,1,1),
+        BorderSizePixel=0,
+    })
+    corner(accentLine, UDim.new(1,0))
+    grad(accentLine)
+
+    -- tab bar
+    local tabBarHost = new("Frame",{
+        Parent=main,
+        Size=UDim2.new(1,-14,0,36),
+        Position=UDim2.new(0,7,0,72),
+        BackgroundTransparency=1,
+    })
+
+    local tabLogoBtn = new("ImageButton",{
+        Parent=tabBarHost,
+        Size=UDim2.fromOffset(40,30),
+        Position=UDim2.new(0,0,0.5,-15),
+        BackgroundTransparency=1,
+        AutoButtonColor=false,
+        ClipsDescendants=false,
+        Image=(type(TabLogoImage)=="string" and TabLogoImage or ""),
+        ImageTransparency=0.0,
+        ScaleType=Enum.ScaleType.Fit,
+    })
+    tabLogoBtn.MouseButton1Click:Connect(function() end)
+
+    local tabBar = new("ScrollingFrame",{
+        Parent=tabBarHost,
+        Size=UDim2.new(1,-46,1,0),
+        Position=UDim2.new(0,46,0,0),
+        BackgroundTransparency=1,
+        BorderSizePixel=0,
+        ScrollBarThickness=0,
+        CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.X,
+        ScrollingDirection=Enum.ScrollingDirection.X,
+        ElasticBehavior=Enum.ElasticBehavior.Never,
+    })
+
+    local tabList = new("UIListLayout",{
+        Parent=tabBar,
+        FillDirection=Enum.FillDirection.Horizontal,
+        SortOrder=Enum.SortOrder.LayoutOrder,
+        Padding=UDim.new(0,1),
+    })
+    tabList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        tabBar.CanvasSize = UDim2.new(0, tabList.AbsoluteContentSize.X + 12, 0, 0)
+    end)
+
+    -- drag-scroll tabs
+    do
+        local dragging=false
+        local startX, startCanvas
+        tabBar.InputBegan:Connect(function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                dragging=true
+                startX = input.Position.X
+                startCanvas = tabBar.CanvasPosition.X
+                input.Changed:Connect(function()
+                    if input.UserInputState==Enum.UserInputState.End then dragging=false end
+                end)
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if not dragging then return end
+            if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
+                local dx = input.Position.X - startX
+                tabBar.CanvasPosition = Vector2.new(startCanvas - dx, 0)
+            end
+        end)
+        tabBar.MouseWheelForward:Connect(function()
+            tabBar.CanvasPosition = Vector2.new(tabBar.CanvasPosition.X - 80, 0)
+        end)
+        tabBar.MouseWheelBackward:Connect(function()
+            tabBar.CanvasPosition = Vector2.new(tabBar.CanvasPosition.X + 80, 0)
+        end)
+    end
+
+    -- page container
+    local pageHost = new("Frame",{
+        Parent=main,
+        Size=UDim2.new(1,-14,1,-124),
+        Position=UDim2.new(0,7,0,116),
+        BackgroundColor3=THEME.Panel,
+        BackgroundTransparency=0.12,
+    })
+    corner(pageHost, UDim.new(0,12))
+    stroke(pageHost, 1, THEME.Stroke, 0.20)
+
+    local pages = new("Folder",{Parent=pageHost, Name="Pages"})
+    local currentPageBtn, currentPageFrame
+
+    -- config load/save
+    local config = {}
+    local function loadConfig()
+        if not hasFS() then return end
+        if not isfile(SaveFolder) then return end
+        local raw = readfile(SaveFolder)
+        if type(raw)~="string" or #raw<2 then return end
+        local ok, data = pcall(decode, raw)
+        if ok and type(data)=="table" then config = data end
+    end
+    local function saveConfig()
+        if not hasFS() then return end
+        safe(function() writefile(SaveFolder, encode(config)) end)
+    end
+    loadConfig()
+
+    local function setFlag(flag, val)
+        redzlib.Flags[flag]=val
+        config[flag]=val
+        saveConfig()
+    end
+    local function getFlag(flag, def)
+        if config[flag]==nil then config[flag]=def end
+        redzlib.Flags[flag]=config[flag]
+        return redzlib.Flags[flag]
+    end
+
+    local portalOpen = nil
+    local function portalClear()
+        if portalOpen then
+            safe(function() portalOpen:Destroy() end)
+            portalOpen=nil
+        end
+    end
+    local clickCatcher = new("TextButton",{
+        Parent=portal,
+        Name="Catcher",
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        Text="",
+        Visible=false,
+        ZIndex=9999,
+        AutoButtonColor=false,
+    })
+    clickCatcher.MouseButton1Click:Connect(function()
+        portalClear()
+        clickCatcher.Visible=false
+    end)
+
+    local function openPortal(node)
+        portalClear()
+        clickCatcher.Visible=true
+        node.Parent=portal
+        portalOpen=node
+        return node
+    end
+
+    local function setPage(btn, frame)
+        for _,v in ipairs(pages:GetChildren()) do
+            if v:IsA("Frame") then v.Visible=false end
+        end
+        frame.Visible=true
+        currentPageBtn, currentPageFrame = btn, frame
+
+        for _,b in ipairs(tabBar:GetChildren()) do
+            if b:IsA("TextButton") then
+                tw(b, TweenInfo.new(0.15), {BackgroundTransparency=0.25})
+                b.TextColor3=THEME.Sub
+                local lb=b:FindFirstChildOfClass("TextLabel")
+                if lb then lb.TextColor3=THEME.Sub end
+            end
+        end
+        tw(btn, TweenInfo.new(0.15), {BackgroundTransparency=0.08})
+        btn.TextColor3=THEME.Text
+        local lb2=btn:FindFirstChildOfClass("TextLabel")
+        if lb2 then lb2.TextColor3=THEME.Text end
+
+        portalClear()
+        clickCatcher.Visible=false
+    end
+
+    local Window = {}
+    Window.Gui = gui
+    Window.Main = main
+    Window.PortalClear = portalClear
+    Window.Save = saveConfig
+
+    dragify(main, top, true)
+
+    -- UI toggle button (RightShift)
+    local uiVisible = true
+    local function SetUI(v)
+        uiVisible = v and true or false
+        main.Visible = uiVisible
+    end
+    local function ToggleUI() SetUI(not uiVisible) end
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if input.KeyCode == Enum.KeyCode.RightShift then
+            ToggleUI()
+        end
+    end)
+    local toggleGui = new("ScreenGui",{Name="Ryzu_UI_ToggleBtn", Parent=CoreGui, ResetOnSpawn=false, IgnoreGuiInset=true, ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+    local toggleBtn = new("ImageButton",{
+        Parent=toggleGui,
+        Size=UDim2.fromOffset(46,46),
+        Position=UDim2.new(1,-64,0,120),
+        BackgroundColor3=THEME.Panel,
+        BackgroundTransparency=0.10,
+        AutoButtonColor=false,
+        ClipsDescendants=true,
+        Image=(type(ToggleButtonImage)=="string" and ToggleButtonImage or ""),
+        ScaleType=Enum.ScaleType.Crop,
+    })
+    corner(toggleBtn, UDim.new(1,0))
+    stroke(toggleBtn, 1, THEME.Stroke, 0.22)
+    toggleBtn.MouseButton1Click:Connect(ToggleUI)
+    dragify(toggleBtn, toggleBtn, true)
+
+    -- widgets factories
+    local function mkCard(parent, h)
+        local card = new("Frame",{
+            Parent=parent,
+            Size=UDim2.new(1,0,0,h),
+            BackgroundColor3=THEME.Panel2,
+            BackgroundTransparency=0.10,
+        })
+        corner(card, UDim.new(0,9))
+        stroke(card, 1, THEME.Stroke, 0.26)
+        return card
+    end
+
+    local function mkLabel(parent, text, size, y, color, bold)
+        return new("TextLabel",{
+            Parent=parent,
+            Size=UDim2.new(1, -18, 0, size+4),
+            Position=UDim2.new(0, 10, 0, y),
+            BackgroundTransparency=1,
+            Text=text or "",
+            TextColor3=color or THEME.Text,
+            Font=bold and Enum.Font.GothamBold or Enum.Font.GothamMedium,
+            TextSize=size or 14,
+            TextXAlignment=Enum.TextXAlignment.Left,
+        })
+    end
+
+    local function mkHint(parent, text, y)
+        return new("TextLabel",{
+            Parent=parent,
+            Size=UDim2.new(1, -18, 0, 16),
+            Position=UDim2.new(0, 10, 0, y),
+            BackgroundTransparency=1,
+            Text=text or "",
+            TextColor3=THEME.Muted,
+            Font=Enum.Font.Gotham,
+            TextSize=11,
+            TextXAlignment=Enum.TextXAlignment.Left,
+        })
+    end
+
+    function Window:MakeTab(tcfg)
+        tcfg = tcfg or {}
+        local tTitle = tostring(tcfg.Title or "Tab")
+
+        local btn = new("TextButton",{
+            Parent=tabBar,
+            Size=UDim2.fromOffset(140, 34),
+            BackgroundColor3=THEME.Panel,
+            BackgroundTransparency=0.25,
+            Text="",
+            TextColor3=THEME.Sub,
+            Font=Enum.Font.GothamSemibold,
+            TextSize=13,
+            AutoButtonColor=false,
+            TextXAlignment=Enum.TextXAlignment.Center,
+        })
+        corner(btn, UDim.new(0,10))
+        stroke(btn, 1, THEME.Stroke, 0.22)
+
+        local tabLbl = new("TextLabel",{
+            Parent=btn,
+            Size=UDim2.new(1, 0, 1, 0),
+            Position=UDim2.new(0, 0, 0, 0),
+            BackgroundTransparency=1,
+            Text=tTitle,
+            TextColor3=THEME.Sub,
+            Font=Enum.Font.GothamSemibold,
+            TextSize=14,
+            TextXAlignment=Enum.TextXAlignment.Center,
+            TextYAlignment=Enum.TextYAlignment.Center,
+        })
+
+        local page = new("Frame",{
+            Parent=pages,
+            Size=UDim2.fromScale(1,1),
+            BackgroundTransparency=1,
+            Visible=false,
+            Name="Page_"..tTitle,
+        })
+
+        -- two columns
+        local left = new("Frame",{
+            Parent=page,
+            Size=UDim2.new(0.5,-6,1,0),
+            BackgroundTransparency=1,
+            Position=UDim2.new(0,0,0,0),
+        })
+        local right = new("Frame",{
+            Parent=page,
+            Size=UDim2.new(0.5,-6,1,0),
+            BackgroundTransparency=1,
+            Position=UDim2.new(0.5,6,0,0),
+        })
+
+        local function mkCol(host)
+            local sc = new("ScrollingFrame",{
+                Parent=host,
+                Size=UDim2.fromScale(1,1),
+                BackgroundTransparency=1,
+                ScrollBarThickness=0,
+                ScrollBarImageTransparency=1,
+                CanvasSize=UDim2.new(0,0,0,0),
+                AutomaticCanvasSize=Enum.AutomaticSize.Y,
+                ElasticBehavior=Enum.ElasticBehavior.Never,
+                ScrollingDirection=Enum.ScrollingDirection.Y,
+            })
+            pad(sc, 2,2,2,8)
+            new("UIListLayout",{
+                Parent=sc,
+                Padding=UDim.new(0,3),
+                SortOrder=Enum.SortOrder.LayoutOrder,
+            })
+            return sc
+        end
+
+        local L = mkCol(left)
+        local R = mkCol(right)
+
+        local countL, countR = 0, 0
+        local function resolveColumn(which)
+            if which == "Left" or which == "Right" then
+                return which
+            end
+            if countL <= countR then
+                return "Left"
+            else
+                return "Right"
+            end
+        end
+
+        local function col(which)
+            return (resolveColumn(which) == "Right") and R or L
+        end
+
+        local function bump(which)
+            which = resolveColumn(which)
+            if which == "Right" then 
+                countR = countR + 1
+            else 
+                countL = countL + 1
+            end
+            return which
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            setPage(btn, page)
+        end)
+
+        local Tab = {}
+
+        function Tab:AddSection(arr)
+            local name = (type(arr)=="table" and tostring(arr[1] or "Section")) or "Section"
+            local column = (type(arr)=="table" and arr.Column) or nil
+
+            local card = mkCard(col(bump(column)), 30)
+            local bar = new("Frame",{
+                Parent=card,
+                Size=UDim2.new(1,-18,0,2),
+                Position=UDim2.new(0,9,0,8),
+                BackgroundColor3=Color3.new(1,1,1),
+                BorderSizePixel=0,
+            })
+            corner(bar, UDim.new(1,0))
+            grad(bar)
+
+            mkLabel(card, name, 13, 9, THEME.Text, true)
+            return card
+        end
+
+        function Tab:AddParagraph(p)
+            p = p or {}
+            local column = p.Column
+            local card = mkCard(col(bump(column)), 64)
+            mkLabel(card, tostring(p.Title or p.Name or ""), 14, 8, THEME.Text, true)
+
+            local content = new("TextLabel",{
+                Parent=card,
+                Size=UDim2.new(1,-18,1,-28),
+                Position=UDim2.new(0,10,0,28),
+                BackgroundTransparency=1,
+                Text=tostring(p.Content or p.Description or ""),
+                TextWrapped=true,
+                TextYAlignment=Enum.TextYAlignment.Top,
+                TextColor3=THEME.Sub,
+                Font=Enum.Font.Gotham,
+                TextSize=12,
+                TextXAlignment=Enum.TextXAlignment.Left,
+            })
+
+            local api = {}
+            function api:SetDesc(t) content.Text = tostring(t or "") end
+            function api:SetContent(t) content.Text = tostring(t or "") end
+            api.Frame = card
+            return api
+        end
+
+        function Tab:AddButton(b)
+            b=b or {}
+            local column=b.Column
+            local card = mkCard(col(bump(column)), 46)
+            local bTitle = tostring(b.Title or b.Name or "Button")
+            local bDesc  = tostring(b.Description or "")
+            local bIcon  = tostring(b.Icon or "")
+            local btn2 = new("TextButton",{
+                Parent=card,
+                Size=UDim2.new(1,-12,1,-12),
+                Position=UDim2.new(0,6,0,6),
+                BackgroundColor3=THEME.Panel,
+                BackgroundTransparency=0.05,
+                Text=bTitle,
+                TextColor3=THEME.Text,
+                Font=Enum.Font.GothamSemibold,
+                TextSize=14,
+                AutoButtonColor=false,
+            })
+            corner(btn2, UDim.new(0,10))
+            stroke(btn2, 1, THEME.Stroke, 0.25)
+
+            if bIcon ~= "" and bIcon ~= "nil" then
+                btn2.TextXAlignment=Enum.TextXAlignment.Left
+                btn2.Text = "      "..btn2.Text
+                local icoHolder = new("Frame",{
+                    Parent=btn2,
+                    Size=UDim2.fromOffset(18,18),
+                    Position=UDim2.new(0,10,0.5,-9),
+                    BackgroundColor3=THEME.Bg,
+                    BackgroundTransparency=0.20,
+                    ClipsDescendants=true,
+                })
+                corner(icoHolder, UDim.new(1,0))
+                stroke(icoHolder, 1, THEME.Stroke, 0.20)
+                new("ImageLabel",{
+                    Parent=icoHolder,
+                    Size=UDim2.fromScale(1,1),
+                    BackgroundTransparency=1,
+                    Image=bIcon,
+                    ScaleType=Enum.ScaleType.Crop,
+                })
+            end
+
+            local desc = bDesc
+            if #desc>0 then
+                btn2.TextXAlignment=Enum.TextXAlignment.Left
+                btn2.Text = "  "..btn2.Text
+                new("TextLabel",{
+                    Parent=btn2,
+                    Size=UDim2.new(1,-18,0,16),
+                    Position=UDim2.new(0,10,1,-18),
+                    BackgroundTransparency=1,
+                    Text=desc,
+                    TextColor3=THEME.Muted,
+                    Font=Enum.Font.Gotham,
+                    TextSize=12,
+                    TextXAlignment=Enum.TextXAlignment.Left,
+                })
+            end
+
+            btn2.MouseEnter:Connect(function() tw(btn2,nil,{BackgroundTransparency=0.0}) end)
+            btn2.MouseLeave:Connect(function() tw(btn2,nil,{BackgroundTransparency=0.05}) end)
+            btn2.MouseButton1Click:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                if type(b.Callback)=="function" then safe(b.Callback) end
+            end)
+            return btn2
+        end
+
+        function Tab:AddInfoButton(b)
+            b=b or {}
+            local column=b.Column
+            local title=tostring(b.Title or b.Name or "Info")
+            local desc=tostring(b.Description or b.Desc or "")
+            local icon=tostring(b.Icon or b.Image or "")
+            local card = mkCard(col(bump(column)), 54)
+
+            local btn = new("TextButton",{
+                Parent=card,
+                Size=UDim2.new(1,-12,1,-12),
+                Position=UDim2.new(0,6,0,6),
+                BackgroundColor3=THEME.Panel,
+                BackgroundTransparency=0.05,
+                Text="",
+                AutoButtonColor=false,
+            })
+            corner(btn, UDim.new(0,10))
+            stroke(btn, 1, THEME.Stroke, 0.25)
+
+            local xoff = 12
+            if icon ~= "" and icon ~= "nil" then
+                local icoHolder = new("Frame",{
+                    Parent=btn,
+                    Size=UDim2.fromOffset(28,28),
+                    Position=UDim2.new(0,10,0.5,-14),
+                    BackgroundColor3=THEME.Bg,
+                    BackgroundTransparency=0.15,
+                    ClipsDescendants=true,
+                })
+                corner(icoHolder, UDim.new(1,0))
+                stroke(icoHolder, 1, THEME.Stroke, 0.20)
+                new("ImageLabel",{
+                    Parent=icoHolder,
+                    Size=UDim2.fromScale(1,1),
+                    BackgroundTransparency=1,
+                    Image=icon,
+                    ScaleType=Enum.ScaleType.Crop,
+                })
+                xoff = 46
+            end
+
+            mkLabel(btn, title, 14, xoff, THEME.Text, true)
+            if desc ~= "" then
+                new("TextLabel",{
+                    Parent=btn,
+                    Size=UDim2.new(1,-(xoff+16),0,16),
+                    Position=UDim2.new(0,xoff,1,-18),
+                    BackgroundTransparency=1,
+                    Text=desc,
+                    TextColor3=THEME.Muted,
+                    Font=Enum.Font.Gotham,
+                    TextSize=12,
+                    TextXAlignment=Enum.TextXAlignment.Left,
+                })
+            end
+
+            local hint = new("TextLabel",{
+                Parent=btn,
+                Size=UDim2.fromOffset(40,16),
+                Position=UDim2.new(1,-44,0.5,-8),
+                BackgroundTransparency=1,
+                Text="▶",
+                TextColor3=THEME.Muted,
+                Font=Enum.Font.GothamSemibold,
+                TextSize=14,
+                TextXAlignment=Enum.TextXAlignment.Right,
+            })
+
+            btn.MouseButton1Click:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                if type(b.Callback)=="function" then safe(b.Callback) end
+            end)
+            return btn
+        end
+
+        function Tab:AddInfoToggle(t)
+            t=t or {}
+            local name=tostring(t.Title or t.Name or "Toggle")
+            local desc=tostring(t.Description or "")
+            local icon=tostring(t.Icon or t.Image or "")
+            local flag=tostring(t.Flag or name)
+            local val=getFlag(flag, t.Default==true)
+            local column=t.Column
+
+            local card = mkCard(col(bump(column)), (desc~="" and 66 or 56))
+            local xoff = 14
+
+            if icon ~= "" and icon ~= "nil" then
+                local icoHolder = new("Frame",{
+                    Parent=card,
+                    Size=UDim2.fromOffset(30,30),
+                    Position=UDim2.new(0,10,0,10),
+                    BackgroundColor3=THEME.Bg,
+                    BackgroundTransparency=0.15,
+                    ClipsDescendants=true,
+                })
+                corner(icoHolder, UDim.new(1,0))
+                stroke(icoHolder, 1, THEME.Stroke, 0.20)
+                new("ImageLabel",{
+                    Parent=icoHolder,
+                    Size=UDim2.fromScale(1,1),
+                    BackgroundTransparency=1,
+                    Image=icon,
+                    ScaleType=Enum.ScaleType.Crop,
+                })
+                xoff = 48
+            end
+
+            mkLabel(card, name, 14, xoff, THEME.Text, true)
+            if desc~="" then mkHint(card, desc, 34) end
+
+            local btnT = new("TextButton",{
+                Parent=card,
+                Size=UDim2.fromOffset(30,30),
+                Position=UDim2.new(1,-42,0.5,-15),
+                BackgroundColor3=THEME.Bg,
+                BackgroundTransparency=0.05,
+                Text="",
+                AutoButtonColor=false,
+            })
+            corner(btnT, UDim.new(1,0))
+            stroke(btnT, 1, THEME.Stroke, 0.25)
+
+            local mark = new("ImageLabel",{
+                Parent = btnT,
+                Size = UDim2.fromOffset(18,18),
+                Position = UDim2.new(0.5,-9,0.5,-9),
+                BackgroundTransparency = 1,
+                Image = "rbxassetid://80945442319183",
+                ImageColor3 = Color3.fromRGB(255,255,255),
+                ImageTransparency = 1,
+            })
+
+            local function paint(on)
+                if on then
+                    tw(btnT,nil,{
+                        BackgroundColor3 = THEME.Accent,
+                        BackgroundTransparency = 0
+                    })
+                    mark.ImageTransparency = 0
+                else
+                    tw(btnT,nil,{
+                        BackgroundColor3 = Color3.fromRGB(58,58,70),
+                        BackgroundTransparency = 0
+                    })
+                    mark.ImageTransparency = 1
+                end
+            end
+            paint(val)
+
+            local function set(on)
+                val=not not on
+                setFlag(flag, val)
+                paint(val)
+                if type(t.Callback)=="function" then safe(t.Callback, val) end
+            end
+
+            btnT.MouseButton1Click:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                set(not val)
+            end)
+
+            return {Get=function() return val end, Set=set}
+        end
+
+        function Tab:AddToggle(t)
+            t=t or {}
+            local name=tostring(t.Name or "Toggle")
+            local desc=tostring(t.Description or "")
+            local flag=tostring(t.Flag or name)
+            local val=getFlag(flag, t.Default==true)
+            local column=t.Column
+
+            local cardH = (desc~="" and 50 or 42)
+            local card = mkCard(col(bump(column)), cardH)
+            local cardStroke = card:FindFirstChildOfClass("UIStroke")
+
+            mkLabel(card, name, 13, 7, THEME.Text, true)
+            if desc~="" then
+                mkHint(card, desc, 25)
+            end
+
+            local btnT = new("TextButton",{
+                Parent=card,
+                Size=UDim2.fromOffset(22,22),
+                Position=UDim2.new(1,-32,0.5,-11),
+                BackgroundColor3=Color3.fromRGB(58,58,70),
+                BackgroundTransparency=0,
+                Text="",
+                AutoButtonColor=false,
+            })
+            corner(btnT, UDim.new(1,0))
+            stroke(btnT, 1, THEME.Stroke, 0.35)
+
+            local mark = new("TextLabel",{
+                Parent=btnT,
+                Size=UDim2.fromScale(1,1),
+                BackgroundTransparency=1,
+                Text="✓",
+                TextColor3=THEME.Text,
+                Font=Enum.Font.GothamBold,
+                TextSize=16,
+                TextTransparency=1,
+            })
+
+            local function paint(on)
+                if on then
+                    tw(btnT,nil,{BackgroundColor3=THEME.Accent2})
+                    mark.TextTransparency=0
+                    tw(card, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.04})
+                    if cardStroke then
+                        cardStroke.Color = THEME.Accent2
+                        cardStroke.Transparency = 0.08
+                        cardStroke.Thickness = 1.2
+                    end
+                else
+                    tw(btnT,nil,{BackgroundColor3=Color3.fromRGB(58,58,70)})
+                    mark.TextTransparency=1
+                    tw(card, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.10})
+                    if cardStroke then
+                        cardStroke.Color = THEME.Stroke
+                        cardStroke.Transparency = 0.26
+                        cardStroke.Thickness = 1
+                    end
+                end
+            end
+            paint(val)
+
+            local function set(on)
+                val=not not on
+                setFlag(flag, val)
+                paint(val)
+                if type(t.Callback)=="function" then safe(t.Callback, val) end
+            end
+
+            if type(t.Callback)=="function" then safe(t.Callback, val) end
+            btnT.MouseButton1Click:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                set(not val)
+            end)
+
+            return {Get=function() return val end, Set=set}
+        end
+
+        function Tab:AddSlider(s)
+            s=s or {}
+            local name=tostring(s.Name or "Slider")
+            local flag=tostring(s.Flag or name)
+            local min=tonumber(s.Min or 0) or 0
+            local max=tonumber(s.Max or 100) or 100
+            if max<min then min,max=max,min end
+            local def=tonumber(s.Default) or min
+            def=clamp(def,min,max)
+            local val=tonumber(getFlag(flag, def)) or def
+            val=clamp(val,min,max)
+
+            local column=s.Column
+            local card = mkCard(col(bump(column)), 60)
+            mkLabel(card, name, 14, 8, THEME.Text, true)
+
+            local valueLbl = new("TextLabel",{
+                Parent=card,
+                Size=UDim2.new(0,80,0,18),
+                Position=UDim2.new(1,-90,0,8),
+                BackgroundTransparency=1,
+                Text=tostring(val),
+                TextColor3=THEME.Sub,
+                Font=Enum.Font.GothamSemibold,
+                TextSize=13,
+                TextXAlignment=Enum.TextXAlignment.Right,
+            })
+
+            local bar = new("Frame",{
+                Parent=card,
+                Size=UDim2.new(1,-20,0,8),
+                Position=UDim2.new(0,10,0,38),
+                BackgroundColor3=Color3.fromRGB(55,55,65),
+                BackgroundTransparency=0.10,
+                BorderSizePixel=0,
+            })
+            corner(bar, UDim.new(1,0))
+            stroke(bar, 1, THEME.Stroke, 0.35)
+
+            local fill = new("Frame",{
+                Parent=bar,
+                Size=UDim2.new(0,0,1,0),
+                BackgroundColor3=THEME.Accent,
+                BorderSizePixel=0,
+            })
+            corner(fill, UDim.new(1,0))
+
+            local knob = new("Frame",{
+                Parent=bar,
+                Size=UDim2.fromOffset(16,16),
+                Position=UDim2.new(0, -8, 0.5, -8),
+                BackgroundColor3=THEME.Text,
+                BorderSizePixel=0,
+            })
+            corner(knob, UDim.new(1,0))
+            stroke(knob, 1, THEME.Stroke, 0.45)
+
+            local function set(v, fire)
+                v = clamp(math.floor(v+0.5), min, max)
+                val=v
+                setFlag(flag, val)
+                valueLbl.Text=tostring(val)
+                local a = (val-min)/(max-min==0 and 1 or (max-min))
+                fill.Size=UDim2.new(a,0,1,0)
+                knob.Position=UDim2.new(a, -8, 0.5, -8)
+                if fire and type(s.Callback)=="function" then safe(s.Callback, val) end
+            end
+            set(val, false)
+
+            local dragging=false
+            local function updateFromX(x)
+                local rel = (x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
+                rel = clamp(rel, 0, 1)
+                local v = min + (max-min)*rel
+                set(v, true)
+            end
+
+            bar.InputBegan:Connect(function(input)
+                if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                    portalClear(); clickCatcher.Visible=false
+                    dragging=true
+                    updateFromX(input.Position.X)
+                end
+            end)
+            bar.InputEnded:Connect(function(input)
+                if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                    dragging=false
+                end
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if not dragging then return end
+                if input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch then
+                    updateFromX(input.Position.X)
+                end
+            end)
+
+            return {Get=function() return val end, Set=function(v) set(v,true) end}
+        end
+
+        function Tab:AddTextbox(tb)
+            tb=tb or {}
+            local name=tostring(tb.Name or "Textbox")
+            local flag=tostring(tb.Flag or name)
+            local column=tb.Column
+            local def=tostring(tb.Default or "")
+            local val=tostring(getFlag(flag, def))
+
+            local card = mkCard(col(bump(column)), 62)
+            mkLabel(card, name, 14, 8, THEME.Text, true)
+
+            local box = new("TextBox",{
+                Parent=card,
+                Size=UDim2.new(1,-20,0,30),
+                Position=UDim2.new(0,10,0,28),
+                BackgroundColor3=THEME.Bg,
+                BackgroundTransparency=0.05,
+                Text=val,
+                PlaceholderText=tostring(tb.Placeholder or ""),
+                TextColor3=THEME.Text,
+                PlaceholderColor3=THEME.Muted,
+                Font=Enum.Font.Gotham,
+                TextSize=13,
+                ClearTextOnFocus=false,
+            })
+            corner(box, UDim.new(0,10))
+            stroke(box, 1, THEME.Stroke, 0.30)
+
+            box.Focused:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                tw(box,nil,{BackgroundTransparency=0.0})
+            end)
+            box.FocusLost:Connect(function()
+                tw(box,nil,{BackgroundTransparency=0.05})
+                val=box.Text
+                setFlag(flag, val)
+                if type(tb.Callback)=="function" then safe(tb.Callback, val) end
+            end)
+
+            return {Get=function() return val end, Set=function(v) box.Text=tostring(v); val=box.Text; setFlag(flag,val) end}
+        end
+
+        function Tab:AddKeybind(kb)
+            kb=kb or {}
+            local name=tostring(kb.Name or "Keybind")
+            local flag=tostring(kb.Flag or name)
+            local column=kb.Column
+
+            local def = kb.DefaultKey
+            local defName = (typeof(def)=="EnumItem" and def.Name) or tostring(def or "None")
+
+            local valName = tostring(getFlag(flag, defName))
+
+            local card = mkCard(col(bump(column)), 54)
+            mkLabel(card, name, 14, 8, THEME.Text, true)
+
+            local btnBind = new("TextButton",{
+                Parent=card,
+                Size=UDim2.fromOffset(110,28),
+                Position=UDim2.new(1,-120,0.5,-14),
+                BackgroundColor3=THEME.Bg,
+                BackgroundTransparency=0.05,
+                Text=valName,
+                TextColor3=THEME.Text,
+                Font=Enum.Font.GothamSemibold,
+                TextSize=13,
+                AutoButtonColor=false,
+            })
+            corner(btnBind, UDim.new(0,10))
+            stroke(btnBind, 1, THEME.Stroke, 0.30)
+
+            local listening=false
+            btnBind.MouseButton1Click:Connect(function()
+                portalClear(); clickCatcher.Visible=false
+                if listening then return end
+                listening=true
+                btnBind.Text="..."
+                btnBind.TextColor3=THEME.Sub
+
+                local con
+                con = UserInputService.InputBegan:Connect(function(input, gp)
+                    if gp then return end
+                    if input.UserInputType==Enum.UserInputType.Keyboard then
+                        local key = input.KeyCode
+                        valName = key.Name
+                        setFlag(flag, valName)
+                        btnBind.Text=valName
+                        btnBind.TextColor3=THEME.Text
+                        listening=false
+                        if con then con:Disconnect() end
+                        if type(kb.Callback)=="function" then safe(kb.Callback, key) end
+                    end
+                end)
+            end)
+
+            UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                if input.UserInputType==Enum.UserInputType.Keyboard then
+                    if input.KeyCode.Name == tostring(redzlib.Flags[flag]) then
+                        if type(kb.Callback)=="function" then safe(kb.Callback, input.KeyCode) end
+                    end
+                end
+            end)
+
+            return {Get=function() return valName end}
+        end
+
+        function Tab:AddDropdown(dd)
+            dd=dd or {}
+            local name=tostring(dd.Name or "Dropdown")
+            local flag=tostring(dd.Flag or name)
+            local opts=(type(dd.Options)=="table" and dd.Options) or {}
+            local multi=dd.Multi==true
+            local search=dd.Search~=false
+            local column=dd.Column
+
+            local def = dd.Default
+            if multi then
+                if type(def)~="table" then def={} end
+            else
+                def = tostring(def or (opts[1] or ""))
+            end
+
+            local val = getFlag(flag, def)
+
+            local card = mkCard(col(bump(column)), 62)
+            mkLabel(card, name, 14, 8, THEME.Text, true)
+
+            local btn = new("TextButton",{
+                Parent=card,
+                Size=UDim2.new(1,-20,0,30),
+                Position=UDim2.new(0,10,0,28),
+                BackgroundColor3=THEME.Bg,
+                BackgroundTransparency=0.05,
+                Text="",
+                TextColor3=THEME.Text,
+                Font=Enum.Font.Gotham,
+                TextSize=13,
+                AutoButtonColor=false,
+                TextXAlignment=Enum.TextXAlignment.Left,
+            })
+            corner(btn, UDim.new(0,10))
+            stroke(btn, 1, THEME.Stroke, 0.30)
+
+            local caret = new("TextLabel",{
+                Parent=btn,
+                Size=UDim2.new(0,20,1,0),
+                Position=UDim2.new(1,-22,0,0),
+                BackgroundTransparency=1,
+                Text="▾",
+                TextColor3=THEME.Sub,
+                Font=Enum.Font.GothamBold,
+                TextSize=16,
+            })
+
+            local function formatValue(v)
+                if multi then
+                    if type(v)~="table" then return "" end
+                    local out={}
+                    for k,sel in pairs(v) do
+                        if sel==true then table.insert(out, k) end
+                    end
+                    table.sort(out)
+                    return (#out==0 and "None" or table.concat(out, ", "))
+                else
+                    return tostring(v or "")
+                end
+            end
+            btn.Text="  "..formatValue(val)
+
+            local function set(v, fire)
+                val=v
+                setFlag(flag, val)
+                btn.Text="  "..formatValue(val)
+                if fire and type(dd.Callback)=="function" then safe(dd.Callback, val) end
+            end
+
+            setFlag(flag, val)
+            if type(dd.Callback)=="function" then safe(dd.Callback, val) end
+
+            local function buildPortal()
+                local absPos = btn.AbsolutePosition
+                local absSize = btn.AbsoluteSize
+
+                local w = absSize.X
+                local h = 260
+
+                local pop = new("Frame",{
+                    Size=UDim2.fromOffset(w, h),
+                    Position=UDim2.fromOffset(absPos.X, absPos.Y + absSize.Y + 6),
+                    BackgroundColor3=THEME.Panel,
+                    BackgroundTransparency=0.02,
+                    ZIndex=10000,
+                })
+                corner(pop, UDim.new(0,12))
+                stroke(pop, 1, THEME.Stroke, 0.18)
+
+                local header = new("Frame",{
+                    Parent=pop,
+                    Size=UDim2.new(1, -12, 0, 36),
+                    Position=UDim2.new(0,6,0,6),
+                    BackgroundColor3=THEME.Panel2,
+                    BackgroundTransparency=0.05,
+                    ZIndex=10001,
+                })
+                corner(header, UDim.new(0,10))
+                stroke(header, 1, THEME.Stroke, 0.25)
+
+                new("TextLabel",{
+                    Parent=header,
+                    Size=UDim2.new(1,-12,1,0),
+                    Position=UDim2.new(0,10,0,0),
+                    BackgroundTransparency=1,
+                    Text=name,
+                    TextColor3=THEME.Text,
+                    Font=Enum.Font.GothamSemibold,
+                    TextSize=14,
+                    TextXAlignment=Enum.TextXAlignment.Left,
+                    ZIndex=10002,
+                })
+
+                local searchBox=nil
+                if search then
+                    searchBox = new("TextBox",{
+                        Parent=pop,
+                        Size=UDim2.new(1,-12,0,30),
+                        Position=UDim2.new(0,6,0,46),
+                        BackgroundColor3=THEME.Bg,
+                        BackgroundTransparency=0.05,
+                        Text="",
+                        PlaceholderText="Search...",
+                        TextColor3=THEME.Text,
+                        PlaceholderColor3=THEME.Muted,
+                        Font=Enum.Font.Gotham,
+                        TextSize=13,
+                        ClearTextOnFocus=false,
+                        ZIndex=10002,
+                    })
+                    corner(searchBox, UDim.new(0,10))
+                    stroke(searchBox, 1, THEME.Stroke, 0.30)
+                end
+
+                local listY = search and 84 or 46
+                local sc = new("ScrollingFrame",{
+                    Parent=pop,
+                    Size=UDim2.new(1,-12,1,-(listY+6)),
+                    Position=UDim2.new(0,6,0,listY),
+                    BackgroundTransparency=1,
+                    Active=true,
+                    ScrollingEnabled=true,
+                    ScrollBarThickness=4,
+                    ScrollBarImageTransparency=1,
+                    CanvasSize=UDim2.new(0,0,0,0),
+                    AutomaticCanvasSize=Enum.AutomaticSize.Y,
+                    ZIndex=10002,
+                    ElasticBehavior=Enum.ElasticBehavior.Never,
+                    ScrollingDirection=Enum.ScrollingDirection.Y,
+                })
+                local lay = new("UIListLayout",{Parent=sc, Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder})
+                pad(sc, 0,0,0,10)
+
+                local function match(q, s)
+                    q=q:lower()
+                    s=tostring(s):lower()
+                    return s:find(q,1,true)~=nil
+                end
+
+                local buttons = {}
+                local function rebuild()
+                    for _,c in ipairs(sc:GetChildren()) do
+                        if c:IsA("TextButton") then c:Destroy() end
+                    end
+                    buttons={}
+                    local q = searchBox and searchBox.Text or ""
+                    for _,o in ipairs(opts) do
+                        if q=="" or match(q,o) then
+                            local item = new("TextButton",{
+                                Parent=sc,
+                                Size=UDim2.new(1,0,0,32),
+                                BackgroundColor3=THEME.Panel2,
+                                BackgroundTransparency=0.10,
+                                Text="  "..tostring(o),
+                                TextColor3=THEME.Text,
+                                Font=Enum.Font.Gotham,
+                                TextSize=13,
+                                TextXAlignment=Enum.TextXAlignment.Left,
+                                AutoButtonColor=false,
+                                ZIndex=10003,
+                            })
+                            corner(item, UDim.new(0,10))
+                            stroke(item, 1, THEME.Stroke, 0.30)
+
+                            local picked=false
+                            if multi then
+                                picked = (type(val)=="table" and val[tostring(o)]==true) or false
+                            else
+                                picked = tostring(val)==tostring(o)
+                            end
+
+                            local mark = new("TextLabel",{
+                                Parent=item,
+                                Size=UDim2.new(0,24,1,0),
+                                Position=UDim2.new(1,-28,0,0),
+                                BackgroundTransparency=1,
+                                Text=picked and "✓" or "",
+                                TextColor3=THEME.Accent2,
+                                Font=Enum.Font.GothamBold,
+                                TextSize=16,
+                                ZIndex=10004,
+                            })
+
+                            item.MouseEnter:Connect(function() tw(item,nil,{BackgroundTransparency=0.04}) end)
+                            item.MouseLeave:Connect(function() tw(item,nil,{BackgroundTransparency=0.10}) end)
+
+                            item.MouseButton1Click:Connect(function()
+                                if multi then
+                                    local t = type(val)=="table" and val or {}
+                                    local key = tostring(o)
+                                    t[key] = not t[key]
+                                    set(t, true)
+                                    mark.Text = t[key] and "✓" or ""
+                                else
+                                    set(tostring(o), true)
+                                    portalClear()
+                                    clickCatcher.Visible=false
+                                end
+                            end)
+
+                            table.insert(buttons, item)
+                        end
+                    end
+                end
+
+                if searchBox then
+                    searchBox:GetPropertyChangedSignal("Text"):Connect(rebuild)
+                end
+                rebuild()
+
+                if multi then
+                    local foot = new("Frame",{
+                        Parent=pop,
+                        Size=UDim2.new(1,-12,0,36),
+                        Position=UDim2.new(0,6,1,-42),
+                        BackgroundTransparency=1,
+                        ZIndex=10002,
+                    })
+                    local apply = new("TextButton",{
+                        Parent=foot,
+                        Size=UDim2.new(0.5,-4,1,0),
+                        BackgroundColor3=THEME.Accent,
+                        BackgroundTransparency=0.0,
+                        Text="Apply",
+                        TextColor3=THEME.Bg,
+                        Font=Enum.Font.GothamBold,
+                        TextSize=13,
+                        AutoButtonColor=false,
+                        ZIndex=10003,
+                    })
+                    corner(apply, UDim.new(0,10))
+                    local close = new("TextButton",{
+                        Parent=foot,
+                        Size=UDim2.new(0.5,-4,1,0),
+                        Position=UDim2.new(0.5,8,0,0),
+                        BackgroundColor3=THEME.Panel2,
+                        BackgroundTransparency=0.05,
+                        Text="Close",
+                        TextColor3=THEME.Text,
+                        Font=Enum.Font.GothamBold,
+                        TextSize=13,
+                        AutoButtonColor=false,
+                        ZIndex=10003,
+                    })
+                    corner(close, UDim.new(0,10))
+                    stroke(close, 1, THEME.Stroke, 0.25)
+
+                    apply.MouseButton1Click:Connect(function()
+                        portalClear()
+                        clickCatcher.Visible=false
+                    end)
+                    close.MouseButton1Click:Connect(function()
+                        portalClear()
+                        clickCatcher.Visible=false
+                    end)
+                end
+
+                return pop
+            end
+
+            btn.MouseButton1Click:Connect(function()
+                if portalOpen then
+                    portalClear()
+                    clickCatcher.Visible=false
+                    return
+                end
+                local pop = buildPortal()
+                openPortal(pop)
+            end)
+
+            return {Get=function() return val end, Set=function(v) set(v,true) end, Refresh=function(n) if type(n)=="table" then opts=n end end}
+        end
+
+        -- open first tab
+        if not currentPageFrame then
+            setPage(btn, page)
+        end
+
+        return Tab
+    end
+
+    function Window:AddMinimizeButton(mcfg)
+        mcfg = mcfg or {}
+        local img = (mcfg.Button and mcfg.Button.Image) or "rbxassetid://73675787844710"
+        local bgT = (mcfg.Button and mcfg.Button.BackgroundTransparency)
+        if bgT == nil then bgT = 0.10 end
+        local cr = (mcfg.Corner and mcfg.Corner.CornerRadius) or UDim.new(0, 10)
+
+        local mini = new("ImageButton",{
+            Parent=gui,
+            Size=UDim2.fromOffset(44,44),
+            Position=UDim2.new(0,18,0.5,-22),
+            BackgroundColor3=THEME.Panel,
+            BackgroundTransparency=bgT,
+            Image=img,
+            AutoButtonColor=false,
+        })
+        corner(mini, cr)
+        stroke(mini, 1, THEME.Stroke, 0.25)
+
+        local open=true
+        mini.MouseButton1Click:Connect(function()
+            open=not open
+            main.Visible=open
+            portalClear()
+            clickCatcher.Visible=false
+        end)
+
+        dragify(mini, mini)
+        return mini
+    end
+
+    return Window
+end
+
+return redzlib
